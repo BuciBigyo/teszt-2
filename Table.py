@@ -1,5 +1,6 @@
 import sqlite3
 import pandas as pd
+from typing import Optional
 
 class tablakezelo:
     def __init__(self, db_path: str,table_name:str):
@@ -29,6 +30,86 @@ class tablakezelo:
         self.conn.execute(query)
         self.conn.commit()
         print(f"✅ Table '{self.table_name}' ready in {self.db_path}")
+    def create_lakasfel_table(self, table_name: Optional[str] = None):
+        """
+        Create the housing/household table 'lakasfel' (or a custom name) if it doesn't exist.
+        Columns match your DataFrame:
+          LakhelyID, LakásID, HáztartásID, Lakszemélyekszáma, Háztartástípus
+        """
+        tname = table_name or self.table_name
+        query = f"""
+        CREATE TABLE IF NOT EXISTS {tname} (
+            LakhelyID           TEXT NOT NULL,
+            LakásID             TEXT NOT NULL,
+            HáztartásID         TEXT NOT NULL,
+            Lakszemélyekszáma   INTEGER NOT NULL,
+            Háztartástípus      TEXT,
+            PRIMARY KEY (HáztartásID)
+        );
+        """
+        self.conn.execute(query)
+        # Helpful indexes
+        self.conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{tname}_LakhelyID ON {tname}(LakhelyID);")
+        self.conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{tname}_LakasID   ON {tname}(LakásID);")
+        self.conn.commit()
+        print(f"✅ Table '{tname}' ready in {self.db_path}")
+
+    def insert_lakasfel(self, lakasfel_df: pd.DataFrame, table_name: Optional[str] = None, replace: bool = False, chunk: int = 100_000):
+        """
+        Bulk insert a lakasfel DataFrame.
+        - If replace=True, uses INSERT OR REPLACE (overwrites by primary key 'HáztartásID').
+        - Inserts in chunks to keep memory reasonable.
+        """
+        tname = table_name or self.table_name
+
+        # Ensure required columns exist and cast to expected dtypes
+        required = ["LakhelyID", "LakásID", "HáztartásID", "Lakszemélyekszáma", "Háztartástípus"]
+        missing = [c for c in required if c not in lakasfel_df.columns]
+        if missing:
+            raise ValueError(f"Missing required columns in DataFrame: {missing}")
+
+        df = lakasfel_df.copy()
+
+        # Casts (align with table schema)
+        df["LakhelyID"] = df["LakhelyID"].astype(str)
+        df["LakásID"] = df["LakásID"].astype(str)
+        df["HáztartásID"] = df["HáztartásID"].astype(str)
+        df["Lakszemélyekszáma"] = pd.to_numeric(df["Lakszemélyekszáma"], errors="coerce").fillna(0).astype(int)
+        # allow NULL for type if missing
+        if "Háztartástípus" in df.columns:
+            df["Háztartástípus"] = df["Háztartástípus"].astype(object)
+
+        op = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
+        sql = f"""
+        {op} INTO {tname}
+        (LakhelyID, LakásID, HáztartásID, Lakszemélyekszáma, Háztartástípus)
+        VALUES (?, ?, ?, ?, ?)
+        """
+
+        # Chunked executemany inside a single transaction for speed
+        cur = self.conn.cursor()
+        try:
+            self.conn.execute("BEGIN;")
+            for start in range(0, len(df), chunk):
+                part = df.iloc[start:start+chunk]
+                cur.executemany(
+                    sql,
+                    list(zip(
+                        part["LakhelyID"].tolist(),
+                        part["LakásID"].tolist(),
+                        part["HáztartásID"].tolist(),
+                        part["Lakszemélyekszáma"].tolist(),
+                        part["Háztartástípus"].where(part["Háztartástípus"].notna(), None).tolist(),
+                    ))
+                )
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            raise
+        finally:
+            cur.close()
+
+        print(f"📤 Inserted {len(df)} rows into '{tname}'")
 
     def insert_dataframe(self, df: pd.DataFrame,név:str):
         """

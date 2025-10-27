@@ -2,11 +2,13 @@ import sqlite3
 import pandas as pd
 import random
 import numpy as np
+from typing import Optional, Tuple, List
 from Table import tablakezelo
 
 data=tablakezelo("populacio.db","Szimulació")
 data.create_table()
 data.create_ratio_table()
+data.create_lakasfel_table("Lakasfeltoltes")
 data.reset_table()
 
 ht = pd.read_excel("telepules_hierarchia.xlsx")
@@ -44,6 +46,7 @@ hfa_lin = hfa.melt(
 
 hfa_lin[["Megye", "TelepulesTipus"]] = hfa_lin["Location"].str.split(" | ",n=1, expand=True)
 hfa_lin.drop(columns="Location", inplace=True)
+print("Foglalkoztatott népesség adatok:")
 print(hfa_lin.head())
 
 
@@ -88,7 +91,6 @@ lakasszam=ht["Lakások száma"]
 
 
 helytab=ht[["Helység megnevezése","Vármegye","Településtípus","Lakó-népesség","Lakások száma"]]
-#laktab=helytab.copy()
 helytab=helytab.copy()
 helytab["Ferfi"]=None
 helytab["No"]=None
@@ -110,31 +112,7 @@ helytab["Elvált"]=None
 helytab["15 évnél fiatalabb"]=None
 helytab["Helység típus"]=None
 helytab["Helység megye"]=None
-"""
-for index,row in laktab.iterrows():
-    hnév=row.iloc[0]
-    try:
-        lakadat=hl[hnév]
-        hazadat=ha[hnév]
-        laktab.loc[index,"Lakott lakás"]=lakadat[0]
-        laktab.loc[index,"1 szoba"]=lakadat[1]
-        laktab.loc[index,"2 csoba"]=lakadat[2]
-        laktab.loc[index,"3 szoba"]=lakadat[3]
-        laktab.loc[index,"4 vagy több szoba"]=lakadat[4]
-        laktab.loc[index,"Egyszemélyes háztartás"]=hazadat[0]
-        laktab.loc[index,"Kétszemélyes háztartás"]=hazadat[1]
-        laktab.loc[index,"Háromszemélyes Háztartás"]=hazadat[2]
-        laktab.loc[index,"Négyszemélyes háztartás"]=hazadat[3]
-        laktab.loc[index,"Ötszemélyes háztartás"]=hazadat[4]
-        laktab.loc[index,"Hat vagy többszemélyes háztartás"]=hazadat[5]
-        laktab.loc[index,"Egy családból álló háztartás"]=hazadat[6]
-        laktab.loc[index,"Több családból álló háztartás"]=hazadat[9]
-        laktab.loc[index,"Nem családháztartás"]=hazadat[12]
-
-    except:
-        print("Nincs ilyen nevű város:{hnév}")
-
-   """     
+   
 for index,row in helytab.iterrows():
 
     név=row.iloc[0]
@@ -192,120 +170,6 @@ for index,row in helytab.iterrows():
         print("Nincs ilyen város",név)
 
 
-
-def linearizalas(lak:pd.DataFrame)-> pd.DataFrame:
-    data=lak.copy()
-    szobasoszlopok=[c for c in data.columns if str[c].lower().endswith("háztartás")]
-    hosszított=szobasoszlopok.melt(id_vars=["LakhelyID"],value_vars=szobasoszlopok,var_name="lak_meret",value_name="lakszam")
-    hosszított["lak_meret"]=hosszított["lak_meret"].str.replace(" személyes háztartás","",regex=False).astype(int)
-    hosszított["lakszam"]=hosszított["lakszam"].fillna(0).astype(int)
-    hosszított=hosszított[hosszított["lakszam"]>0]
-    return hosszított.sort_values(["LakhelyID","lak_meret"])
-
-def build_households_from_counts(hh_counts_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Input: hh_counts_df (long or wide). Output households table:
-      HouseholdID (int), LakhelyID (int), hh_size (int).
-    HouseholdID scheme: LakhelyID*1_000_000 + per-city sequence.
-    """
-    long = linearizalas(hh_counts_df)
-    rows = []
-    for (city,), grp in long.groupby(["LakhelyID"]):
-        seq = 0
-        for _, r in grp.iterrows():
-            s, n = int(r.lak_meret), int(r.lakszam)
-            for _ in range(n):
-                seq += 1
-                rows.append({"LakhelyID": int(city), "lak_meret": s, "HouseholdID": int(city)*1_000_000 + seq})
-    return pd.DataFrame(rows, columns=["HouseholdID","LakhelyID","lak_meret"])
-
-people_df=data.query("""select * from Szimulació""")
-
-def assign_people_to_households(people_df: pd.DataFrame,
-                                households_df: pd.DataFrame,
-                                adult_age_cutoff: int = 18,
-                                try_require_adult: bool = True) -> pd.DataFrame:
-    """
-    Returns household_members:
-       HouseholdID, LakosID, role ('head' or 'member'), LakhelyID
-    - Fills exactly hh_size people per household.
-    - If 'age' present and try_require_adult=True, tries to put ≥1 adult in each HH.
-    - Raises if a city doesn't have enough people.
-    """
-    # normalization
-    if "LakosID" not in people_df.columns:
-        # fall back to a deterministic ID
-        people_df = people_df.copy()
-        people_df = people_df.sort_values(["LakhelyID"]).reset_index(drop=True)
-        people_df["LakosID"] = people_df.groupby("LakhelyID").cumcount()+1 + people_df["LakhelyID"]*10_000_000
-
-    out_rows = []
-
-    for city, hh_g in households_df.groupby("LakhelyID"):
-        hh_g = hh_g.sort_values("HouseholdID")
-        ppl = people_df[people_df["LakhelyID"]==city].copy()
-
-        # Quick check: totals must match exactly
-        need = int(hh_g["hh_size"].sum())
-        if len(ppl) < need:
-            raise ValueError(f"City {city}: not enough people ({len(ppl)}) for required {need} household slots.")
-        if len(ppl) > need:
-            # We'll just leave extras unassigned (you can handle them later if needed)
-            ppl = ppl.head(need).copy()
-
-        # Try to ensure ≥1 adult per HH if age present
-        has_age = "Kor" in ppl.columns
-        if try_require_adult and has_age:
-            adults = ppl[ppl["Kor"] >= adult_age_cutoff].sample(frac=1, random_state=42).reset_index(drop=True)
-            kids   = ppl[ppl["Kor"] <  adult_age_cutoff].sample(frac=1, random_state=43).reset_index(drop=True)
-            a_idx, k_idx = 0, 0
-            for _, hh in hh_g.iterrows():
-                k = int(hh.hh_size)
-                members = []
-
-                # pick one adult if available
-                if a_idx < len(adults):
-                    members.append(("fej", int(adults.loc[a_idx, "LakosID"])))
-                    a_idx += 1
-                else:
-                    # fallback: no adult left; take a kid as head
-                    members.append(("fej", int(kids.loc[k_idx, "LakosID"])))
-                    k_idx += 1
-
-                # fill the rest, prefer kids first (optional)
-                while len(members) < k and k_idx < len(kids):
-                    members.append(("tag", int(kids.loc[k_idx, "LakosID"])))
-                    k_idx += 1
-                while len(members) < k and a_idx < len(adults):
-                    members.append(("tag", int(adults.loc[a_idx, "LakosID"])))
-                    a_idx += 1
-
-                if len(members) < k:
-                    raise RuntimeError(f"City {city}: ran out of people while filling Household {hh.HouseholdID}.")
-
-                for role, pid in members:
-                    out_rows.append({"LakhelyID": int(city),
-                                     "HouseholdID": int(hh.HouseholdID),
-                                     "LakosID": pid,
-                                     "Szerep": role})
-        else:
-            # Simple fill: shuffled order, first is head
-            ppl = ppl.sample(frac=1, random_state=44).reset_index(drop=True)
-            p_idx = 0
-            for _, hh in hh_g.iterrows():
-                k = int(hh.hh_size)
-                chosen = ppl.iloc[p_idx:p_idx+k]
-                p_idx += k
-                for j, pid in enumerate(chosen["LakosID"].tolist()):
-                    out_rows.append({"LakhelyID": int(city),
-                                     "HouseholdID": int(hh.HouseholdID),
-                                     "LakosID": int(pid),
-                                     "role": "fej" if j==0 else "member"})
-
-    return pd.DataFrame(out_rows, columns=["HouseholdID","LakosID","LakhelyID","role"])
-
-
-embik=pd.DataFrame({"Lakhely","Nem","Kor","Oktatás"})
 
 def random_age_from_range(age_range: str) -> int:
     if "+" in age_range:
@@ -409,16 +273,10 @@ def szimulacio(index:int,row) -> pd.DataFrame:
     nő = row.get("No", 0)
     össz = row["Lakok"]
     gyerek=row.get("7 évnél fiatalabb",0)
-    kisisk=row.get("Nincs 8 ált.",0)
-    ballagott=row.get("8 általános",0)
-    szakköz=row.get("Szakmai okl",0)
-    gimi=row.get("Érettségi",0)
-    magasisk=row.get("Diploma/Oklevél",0)
     Nőtlen=row.get("Nőtlen",0)
     Házas=row.get("Nőtlen",0)
     Özvegy=row.get("Özvegy",0)
     Elvált=row.get("Elvált",0)
-    #Kiskorú=row.get("15 évnél fiatalabb",0)
     megye=row.get("Vármegye",0)
     teltip=row.get("Településtípus")
     Dolg=row.get("Foglalkoztatott",0)
@@ -434,17 +292,16 @@ def szimulacio(index:int,row) -> pd.DataFrame:
     nőráta = 1 - férfiráta
     ID=0
 
-    age_groups = {k: row[k] for k in row.index if "0" in k or "+" in k}
+    age_groups = {k: row[k] for k in row.index if "0" in k or "+90" in k}
 
     people = []
-    
+
     for age_range, count in age_groups.items():
         genders = np.random.choice( 
             ["Férfi", "Nő"],
             size=count,
             p=[férfiráta, nőráta]
         )
-        print(count)
         for g in genders:
             age = random_age_from_range(age_range)
             kor=korcsoport(age)
@@ -466,15 +323,464 @@ def szimulacio(index:int,row) -> pd.DataFrame:
             
 
     return pd.DataFrame(people)
+def lakasok(varos:pd.DataFrame)->pd.DataFrame:
 
+    pass
+"""def haztart(index,row)->pd.DataFrame:
+    varosID=index+1
+    egylakos= row["1 személyes háztartás"]
+    ketszemelyes=row["2 személyes háztartás"]
+    hármas=row["3 személyes háztartás"]
+    négylakos=row["4 személyes háztartás"]
+    ötlakos=row["5 személyes háztartás"]
+    hatlakos=row["6+ személyes háztartás"]
+    egycsalados=row["Egy családból álló háztartás"]
+    tobbcsalados=row["Több családból álló háztartás"]
+    nemcsalad=row["Nem családháztartás"]
+    count={egylakos:1,ketszemelyes:2,hármas:3,négylakos:4,ötlakos:5,hatlakos:6}
+    család={egycsalados:1,tobbcsalados:2,nemcsalad:3}
+    lakasfel = pd.DataFrame(columns=["LakhelyID", "LakásID", "HáztartásID", "Lakszemélyekszáma", "Háztartástípus"])
+    for méret,db in count.items():
+        for i in range(db):
+            lakasID=(index+1)*1_000_000+(i+1)*10_000+méret
+            háztartásID=(index+1)*1_000_000+(i+1)*10_000
+            lakasfel = lakasfel.append({
+                "LakhelyID": varosID,
+                "LakásID": lakasID,
+                "HáztartásID": háztartásID,
+                "Lakszemélyekszáma": méret,
+                "Háztartástípus": None
+            }, ignore_index=True)
+    for típus,db in család.items():
+        for i in range(db):
+            háztartásID=(index+1)*1_000_000+(i+1)*10_000
+            lakasfel.loc[lakasfel["HáztartásID"]==háztartásID,"Háztartástípus"]=típus
+    print(lakasfel.head(),"-----------------")
+    return lakasfel"""
+            
+def haztart(index: int, row: pd.Series) -> pd.DataFrame:
+    """
+    Build lakasfel for one settlement (index is 0-based).
+    Expects row to have the following columns with INTEGER COUNTS:
+      "1 személyes háztartás", "2 személyes háztartás", ..., "6+ személyes háztartás"
+      "Egy családból álló háztartás", "Több családból álló háztartás", "Nem családháztartás"
+    """
+    rng = np.random.default_rng(42 + index)  # reproducible per settlement
+
+    varosID = index + 1
+
+    # ----- read counts (households counts, not shares)
+    egylakos       = int(pd.to_numeric(row["1 személyes háztartás"], errors="coerce") or 0)
+    ketszemelyes   = int(pd.to_numeric(row["2 személyes háztartás"], errors="coerce") or 0)
+    harmas         = int(pd.to_numeric(row["3 személyes háztartás"], errors="coerce") or 0)
+    negylakos      = int(pd.to_numeric(row["4 személyes háztartás"], errors="coerce") or 0)
+    otlakos        = int(pd.to_numeric(row["5 személyes háztartás"], errors="coerce") or 0)
+    hatplusz       = int(pd.to_numeric(row["6+ személyes háztartás"], errors="coerce") or 0)
+
+    egycsalados    = int(pd.to_numeric(row["Egy családból álló háztartás"], errors="coerce") or 0)
+    tobbcsalados   = int(pd.to_numeric(row["Több családból álló háztartás"], errors="coerce") or 0)
+    nemcsalad      = int(pd.to_numeric(row["Nem családháztartás"], errors="coerce") or 0)
+
+    # ----- sizes -> counts (correct direction!)
+    size_to_count = {
+        1: egylakos,
+        2: ketszemelyes,
+        3: harmas,
+        4: negylakos,
+        5: otlakos,
+        6: hatplusz,   # treat 6+ as 6 for now (can expand to 6–8 later)
+    }
+
+    # Build explicit household size list: [1,1,1,2,2,3,3,3,3,...]
+    size_list = []
+    for size, cnt in size_to_count.items():
+        if cnt > 0:
+            size_list.extend([size] * cnt)
+
+    n_households = len(size_list)
+    if n_households == 0:
+        # return empty, but with the right dtypes
+        return pd.DataFrame({
+            "LakhelyID": pd.Series(dtype="int64"),
+            "LakásID": pd.Series(dtype="int64"),
+            "HáztartásID": pd.Series(dtype="int64"),
+            "Lakszemélyekszáma": pd.Series(dtype="int64"),
+            "Háztartástípus": pd.Series(dtype="string"),
+        })
+
+    # Shuffle sizes to avoid ordering bias
+    rng.shuffle(size_list)
+
+    # ----- household types -> counts (correct direction!)
+    type_to_count = {
+        "Egy családból álló háztartás": egycsalados,
+        "Több családból álló háztartás": tobbcsalados,
+        "Nem családháztartás":          nemcsalad,
+    }
+    # Build explicit type list of length <= n_households
+    type_list = []
+    for t, cnt in type_to_count.items():
+        if cnt > 0:
+            type_list.extend([t] * cnt)
+
+    # Reconcile lengths (trim or pad with the most common type)
+    if len(type_list) >= n_households:
+        type_list = type_list[:n_households]
+    else:
+        # pad with the mode (or fall back to "Egy családból álló háztartás")
+        most_common_type = max(type_to_count.items(), key=lambda kv: kv[1])[0] if n_households > 0 else "Egy családból álló háztartás"
+        type_list.extend([most_common_type] * (n_households - len(type_list)))
+
+    # Shuffle types to avoid position correlation with sizes
+    rng.shuffle(type_list)
+
+    # ----- ID scheme (preserving your original pattern):
+    #   HáztartásID = (index+1)*1_000_000 + (i+1)*10_000
+    #   LakásID     = HáztartásID + size   (as you did)
+    base = (index + 1) * 1_000_000
+    i_seq = np.arange(1, n_households + 1, dtype=np.int64)
+    haztartas_ids = base + i_seq * 10_000
+    lakas_ids = haztartas_ids + np.array(size_list, dtype=np.int64)
+
+    df = pd.DataFrame({
+        "LakhelyID":        np.full(n_households, varosID, dtype=np.int64),
+        "LakásID":          lakas_ids,
+        "HáztartásID":      haztartas_ids,
+        "Lakszemélyekszáma": np.array(size_list, dtype=np.int64),
+        "Háztartástípus":   pd.array(type_list, dtype="string"),
+    })
+
+    # Optional sanity checks (you can remove in production)
+    # Ensure the household-type counts are close to requested counts
+    # and sizes sum to expected persons if you track that elsewhere.
+
+    return df
 
 for index, row in helytab.head(5).iterrows():
     hely=row["Helység megnevezése"]
     varos=szimulacio(index,row)
+    hazadat=haztart(index,row)
+    data.insert_lakasfel(hazadat,table_name="Lakasfeltoltes")
     data.insert_dataframe(varos,hely)
 
+# -------------------------------
+# Helpers
+# -------------------------------
 
+def parse_age_to_int(kor_val) -> Optional[int]:
+    """
+    Turn 'Kor' (age) column into an int if possible.
+    Accepts integers/strings or ranges like '18-24', '18–24'.
+    Returns None if unknown.
+    """
+    if pd.isna(kor_val):
+        return None
+    try:
+        # already numeric or numeric string
+        return int(kor_val)
+    except Exception:
+        s = str(kor_val)
+        # normalize dash variants
+        s = s.replace("–", "-").replace("—", "-").strip()
+        if "-" in s:
+            a, b = s.split("-", 1)
+            try:
+                a = int(a.strip()); b = int(b.strip())
+                return (a + b) // 2  # mid-point as a proxy
+            except Exception:
+                return None
+        # last fallback: strip non-digits
+        digits = "".join(ch for ch in s if ch.isdigit())
+        return int(digits) if digits else None
 
+def is_adult(age: Optional[int], threshold: int = 18) -> bool:
+    return (age is not None) and (age >= threshold)
+
+def ensure_tables_for_assignment(conn: sqlite3.Connection,
+                                 people_table: str,
+                                 lakasfel_table: str,
+                                 link_table: str = "lakasfel_tag"):
+    """
+    Create the (person -> household) link table and useful indexes.
+    Does NOT drop anything.
+    """
+    conn.execute(f"""
+    CREATE TABLE IF NOT EXISTS {link_table} (
+        LakosID        TEXT NOT NULL PRIMARY KEY,
+        HáztartásID    TEXT NOT NULL,
+        LakhelyID      TEXT NOT NULL,
+        Szerep         TEXT
+    );
+    """)
+    conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{link_table}_haz ON {link_table}(HáztartásID);")
+    conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{link_table}_lakhely ON {link_table}(LakhelyID);")
+    # helpful indexes on sources (no-op if exist)
+    conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{people_table}_lakhely ON {people_table}(LakhelyID);")
+    conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{lakasfel_table}_lakhely ON {lakasfel_table}(LakhelyID);")
+    conn.commit()
+
+# -------------------------------
+# Core assigner
+# -------------------------------
+def _ensure_int_max(conn, table, sid):
+    # Numeric max by settlement, robust to TEXT storage
+    row = conn.execute(
+        f'''SELECT MAX(CAST("HáztartásID" AS INTEGER))
+            FROM {table}
+            WHERE "LakhelyID" = ?;''',
+        (str(sid),)
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+def _global_int_max(conn, table):
+    row = conn.execute(
+        f'''SELECT MAX(CAST("HáztartásID" AS INTEGER))
+            FROM {table};'''
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+def _insert_homes_chunk(conn, table, df):
+    # Use executemany with INSERT OR IGNORE to avoid crashes on rare collisions
+    cur = conn.cursor()
+    try:
+        conn.execute("BEGIN;")
+        cur.executemany(
+            f'''INSERT OR IGNORE INTO {table}
+                ("LakhelyID","LakásID","HáztartásID","Lakszemélyekszáma","Háztartástípus")
+                VALUES (?,?,?,?,?);''',
+            list(zip(
+                df["LakhelyID"].astype(str),
+                df["LakásID"].astype(str),
+                df["HáztartásID"].astype(str),
+                df["Lakszemélyekszáma"].astype(int),
+                df["Háztartástípus"].where(df["Háztartástípus"].notna(), None)
+            ))
+        )
+        conn.commit()
+    except:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+def _ensure_int_max(conn, table, sid):
+    # Numeric max by settlement, robust to TEXT storage
+    row = conn.execute(
+        f'''SELECT MAX(CAST("HáztartásID" AS INTEGER))
+            FROM {table}
+            WHERE "LakhelyID" = ?;''',
+        (str(sid),)
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+def _global_int_max(conn, table):
+    row = conn.execute(
+        f'''SELECT MAX(CAST("HáztartásID" AS INTEGER))
+            FROM {table};'''
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+def _insert_homes_chunk(conn, table, df):
+    # Use executemany with INSERT OR IGNORE to avoid crashes on rare collisions
+    cur = conn.cursor()
+    try:
+        conn.execute("BEGIN;")
+        cur.executemany(
+            f'''INSERT OR IGNORE INTO {table}
+                ("LakhelyID","LakásID","HáztartásID","Lakszemélyekszáma","Háztartástípus")
+                VALUES (?,?,?,?,?);''',
+            list(zip(
+                df["LakhelyID"].astype(str),
+                df["LakásID"].astype(str),
+                df["HáztartásID"].astype(str),
+                df["Lakszemélyekszáma"].astype(int),
+                df["Háztartástípus"].where(df["Háztartástípus"].notna(), None)
+            ))
+        )
+        conn.commit()
+    except:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+def _flush_links(conn: sqlite3.Connection, link_table: str,
+                 rows: List[Tuple[str, str, str, Optional[str]]]) -> None:
+    """
+    Batch-insert person→household links.
+    rows: list of (LakosID, HáztartásID, LakhelyID, Szerep)
+    Uses INSERT OR REPLACE so re-runs won't crash on PK collisions.
+    """
+    if not rows:
+        return
+    cur = conn.cursor()
+    try:
+        conn.execute("BEGIN;")
+        cur.executemany(
+            f'''INSERT OR REPLACE INTO {link_table}
+                ("LakosID","HáztartásID","LakhelyID","Szerep")
+                VALUES (?,?,?,?);''',
+            rows
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+def assign_people_to_homes(db_path: str,
+                           people_table: str,
+                           lakasfel_table: str,
+                           link_table: str = "lakasfel_tag",
+                           batch_size: int = 200_000,
+                           prefer_adult_in_single_family: bool = True,
+                           auto_expand_if_capacity_short: bool = True,
+                           rng_seed: int = 12345):
+    rng = np.random.default_rng(rng_seed)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
+
+    ensure_tables_for_assignment(conn, people_table, lakasfel_table, link_table)
+
+    sids = pd.read_sql_query(
+        f"SELECT DISTINCT LakhelyID FROM {people_table} ORDER BY LakhelyID", conn
+    )["LakhelyID"].tolist()
+
+    link_rows = []
+
+    for sid in sids:
+        # --- READS (patched: pass sid as str)
+        people = pd.read_sql_query(
+            f'SELECT LakosID, LakhelyID, Nem, Kor FROM {people_table} WHERE LakhelyID = ?',
+            conn, params=(str(sid),)
+        )
+        if people.empty:
+            continue
+
+        homes = pd.read_sql_query(
+            f'''SELECT "HáztartásID","LakhelyID","Lakszemélyekszáma","Háztartástípus","LakásID"
+                FROM {lakasfel_table} WHERE LakhelyID = ? ORDER BY "HáztartásID"''',
+            conn, params=(str(sid),)
+        )
+
+        # derive adult flags
+        ages = people["Kor"].apply(parse_age_to_int)
+        people["is_adult"] = ages.apply(is_adult).fillna(False)
+
+        # shuffle people
+        idx = np.arange(len(people)); rng.shuffle(idx)
+        people = people.iloc[idx].reset_index(drop=True)
+        adult_ids = people.loc[people["is_adult"], "LakosID"].tolist()
+        minor_ids = people.loc[~people["is_adult"], "LakosID"].tolist()
+
+        # ---------- PATCH START: safe expansion ----------
+        total_capacity = int(homes["Lakszemélyekszáma"].sum()) if not homes.empty else 0
+        total_people = len(people)
+
+        if total_capacity < total_people and auto_expand_if_capacity_short:
+            deficit = total_people - total_capacity
+
+            last_for_sid = _ensure_int_max(conn, lakasfel_table, sid)
+            if last_for_sid is not None:
+                start = last_for_sid
+            else:
+                global_max = _global_int_max(conn, lakasfel_table)
+                start = global_max if global_max is not None else 0
+
+            step = 10_000
+            next_ids = np.arange(start + step, start + step * (deficit + 1), step, dtype=np.int64)
+            new_haz_ids = next_ids
+            new_lakas_ids = new_haz_ids + 1
+
+            add_df = pd.DataFrame({
+                "LakhelyID": str(sid),
+                "LakásID":   new_lakas_ids.astype(str),
+                "HáztartásID": new_haz_ids.astype(str),
+                "Lakszemélyekszáma": 1,
+                "Háztartástípus": "Nem családháztartás",
+            })
+            _insert_homes_chunk(conn, lakasfel_table, add_df)
+            homes = pd.concat([homes, add_df], ignore_index=True)
+            total_capacity = int(homes["Lakszemélyekszáma"].sum())
+        # ---------- PATCH END ----------
+
+        capacity = min(total_capacity, len(people))
+        homes = homes.sample(frac=1.0, random_state=int(rng.integers(0, 2**31-1))).reset_index(drop=True)
+
+        def pop_from(lst, k):
+            take = lst[:k]
+            del lst[:k]
+            return take
+
+        remaining_ids = people["LakosID"].tolist()
+        assigned_count = 0
+
+        for _, h in homes.iterrows():
+            if assigned_count >= capacity:
+                break
+            haz_id = str(h["HáztartásID"])
+            hsize = int(h["Lakszemélyekszáma"])
+            htype = str(h["Háztartástípus"]) if pd.notna(h["Háztartástípus"]) else None
+
+            members = []
+
+            if prefer_adult_in_single_family and htype == "Egy családból álló háztartás" and hsize > 0 and adult_ids:
+                head = pop_from(adult_ids, 1)[0]
+                if head in remaining_ids:
+                    remaining_ids.remove(head)
+                members.append(head)
+
+            need = hsize - len(members)
+            if need > 0:
+                members.extend(pop_from(remaining_ids, min(need, len(remaining_ids))))
+                chosen = set(members)
+                if adult_ids:
+                    adult_ids = [x for x in adult_ids if x not in chosen]
+                if minor_ids:
+                    minor_ids = [x for x in minor_ids if x not in chosen]
+
+            for j, pid in enumerate(members):
+                role = "head" if (j == 0 and htype == "Egy családból álló háztartás") else "member"
+                link_rows.append((pid, haz_id, str(sid), role))
+
+            assigned_count += len(members)
+            if len(link_rows) >= batch_size:
+                _flush_links(conn, link_table, link_rows)
+                link_rows.clear()
+
+        if remaining_ids and auto_expand_if_capacity_short:
+            # spillover guard: create 1-person homes for any leftovers
+            last_for_sid = _ensure_int_max(conn, lakasfel_table, sid)
+            start = last_for_sid if last_for_sid is not None else (_global_int_max(conn, lakasfel_table) or 0)
+            step = 10_000
+            seq = np.arange(start + step, start + step * (len(remaining_ids) + 1), step, dtype=np.int64)
+            add_df = pd.DataFrame({
+                "LakhelyID": str(sid),
+                "LakásID":   (seq + 1).astype(str),
+                "HáztartásID": seq.astype(str),
+                "Lakszemélyekszáma": 1,
+                "Háztartástípus": "Nem családháztartás",
+            })
+            _insert_homes_chunk(conn, lakasfel_table, add_df)
+            for pid, hid in zip(remaining_ids, add_df["HáztartásID"].tolist()):
+                link_rows.append((pid, str(hid), str(sid), "member"))
+            remaining_ids = []
+            if len(link_rows) >= batch_size:
+                _flush_links(conn, link_table, link_rows)
+                link_rows.clear()
+
+    if link_rows:
+        _flush_links(conn, link_table, link_rows)
+        link_rows.clear()
+
+    conn.close()
+    print("✅ Assignment complete.")
+a=assign_people_to_homes(
+    db_path="populacio.db",
+    people_table="Szimulació",
+    lakasfel_table="Lakasfeltoltes",   # <— use your real table name here
+    link_table="lakasfel_tag"
+)
 
 
 varosell=data.query("""
