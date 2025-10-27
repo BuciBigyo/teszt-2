@@ -463,9 +463,7 @@ for index, row in helytab.head(5).iterrows():
     data.insert_lakasfel(hazadat,table_name="Lakasfeltoltes")
     data.insert_dataframe(varos,hely)
 
-# -------------------------------
-# Helpers
-# -------------------------------
+
 
 def parse_age_to_int(kor_val) -> Optional[int]:
     """
@@ -522,46 +520,6 @@ def ensure_tables_for_assignment(conn: sqlite3.Connection,
 # -------------------------------
 # Core assigner
 # -------------------------------
-def _ensure_int_max(conn, table, sid):
-    # Numeric max by settlement, robust to TEXT storage
-    row = conn.execute(
-        f'''SELECT MAX(CAST("HáztartásID" AS INTEGER))
-            FROM {table}
-            WHERE "LakhelyID" = ?;''',
-        (str(sid),)
-    ).fetchone()
-    return int(row[0]) if row and row[0] is not None else None
-
-def _global_int_max(conn, table):
-    row = conn.execute(
-        f'''SELECT MAX(CAST("HáztartásID" AS INTEGER))
-            FROM {table};'''
-    ).fetchone()
-    return int(row[0]) if row and row[0] is not None else None
-
-def _insert_homes_chunk(conn, table, df):
-    # Use executemany with INSERT OR IGNORE to avoid crashes on rare collisions
-    cur = conn.cursor()
-    try:
-        conn.execute("BEGIN;")
-        cur.executemany(
-            f'''INSERT OR IGNORE INTO {table}
-                ("LakhelyID","LakásID","HáztartásID","Lakszemélyekszáma","Háztartástípus")
-                VALUES (?,?,?,?,?);''',
-            list(zip(
-                df["LakhelyID"].astype(str),
-                df["LakásID"].astype(str),
-                df["HáztartásID"].astype(str),
-                df["Lakszemélyekszáma"].astype(int),
-                df["Háztartástípus"].where(df["Háztartástípus"].notna(), None)
-            ))
-        )
-        conn.commit()
-    except:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
 def _ensure_int_max(conn, table, sid):
     # Numeric max by settlement, robust to TEXT storage
     row = conn.execute(
@@ -778,7 +736,7 @@ def assign_people_to_homes(db_path: str,
 a=assign_people_to_homes(
     db_path="populacio.db",
     people_table="Szimulació",
-    lakasfel_table="Lakasfeltoltes",   # <— use your real table name here
+    lakasfel_table="Lakasfeltoltes",   
     link_table="lakasfel_tag"
 )
 
