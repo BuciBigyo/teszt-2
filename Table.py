@@ -8,8 +8,6 @@ class tablakezelo:
         self.db_path = db_path
         self.table_name=table_name
         self.conn=sqlite3.connect(self.db_path)
-
-
     def create_table(self):
         """
         Create the population table if it doesn't exist already.
@@ -23,6 +21,7 @@ class tablakezelo:
             Nem TEXT NOT NULL,
             Kor TEXT NOT NULL,
             Oktatás TEXT NOT NULL,
+            Aktivitas TEXT NOT NULL,
             Kapcsolat TEXT NOT NULL,
             Munkaviszony Text NOT NULL
         );
@@ -142,7 +141,7 @@ class tablakezelo:
 
 
 
-    def create_ratio_table(self, ratio_table_name: str = "school_ratios"):
+    def create_sratio_table(self, ratio_table_name: str = "school_ratios"):
         """
         Create a separate table for storing schooling ratios.
         """
@@ -161,8 +160,48 @@ class tablakezelo:
         self.conn.execute(query)
         self.conn.commit()
         print(f"✅ Ratio table '{ratio_table_name}' ready in {self.db_path}")
+    def create_aratio_table(self, ratio_table_name: str = "labor_ratios"):
+        """
+        Create a separate table for storing schooling ratios.
+        """
+        query = f"""
+        CREATE TABLE IF NOT EXISTS {ratio_table_name} (
+            Nem TEXT,
+            Korcsoport TEXT,
+            Megye TEXT,
+            TelepulesTipus TEXT,
+            IskolaTípus TEXT,
+            Aktivitas  TEXT,
+            Lakossag REAL,
+            Osszes REAL,
+            Arany REAL
+        );
+        """
+        self.conn.execute(query)
+        self.conn.commit()
+        print(f"✅ Ratio table '{ratio_table_name}' ready in {self.db_path}")
+    def create_wratio_table(self, ratio_table_name: str = "work_ratios"):
+            """
+            Create a separate table for storing schooling ratios.
+            """
+            query = f"""
+            CREATE TABLE IF NOT EXISTS {ratio_table_name} (
+                Nem TEXT,
+                Korcsoport TEXT,
+                Megye TEXT,
+                TelepulesTipus TEXT,
+                IskolaTípus TEXT,
+                Munkatípus  TEXT,
+                Lakossag REAL,
+                Osszes REAL,
+                Arany REAL
+            );
+            """
+            self.conn.execute(query)
+            self.conn.commit()
+            print(f"✅ Ratio table '{ratio_table_name}' ready in {self.db_path}")
 
-    def insert_ratios(self, df: pd.DataFrame, ratio_table_name: str = "school_ratios"):
+    def insert_ratios(self, df: pd.DataFrame, ratio_table_name: str ):
         """
         Insert the ratio DataFrame into the database.
         If table exists, replaces it completely.
@@ -171,7 +210,7 @@ class tablakezelo:
         self.conn.commit()
         print(f"✅ Inserted {len(df)} ratio rows into '{ratio_table_name}'")
 
-    def get_ratios(self, nem: str, kor: str, megye: str, tipus: str,
+    def get_eratios(self, nem: str, kor: str, megye: str, tipus: str,
                 ratio_table_name: str = "school_ratios") -> dict:
         """
         Query schooling ratios for a given demographic group.
@@ -189,9 +228,74 @@ class tablakezelo:
         AND TelepulesTipus = ?
         """
         df = pd.read_sql_query(query, self.conn, params=[nem, kor, megye, tipus])
+
         if df.empty:
             return {}
         return dict(zip(df["IskolaTípus"], df["Arany"]))
+    def get_aratios(self, nem: str, kor: str,education:str, megye: str, tipus: str,
+                ratio_table_name: str = "activity_ratios") -> dict:
+        """
+        Query schooling ratios for a given demographic group.
+        Returns a dict: {IskolaTípus: Arany, ...}
+        """       
+        kor = kor.replace('-', '–') 
+        query = f"""
+        SELECT GazdAkt, Arany
+        FROM {ratio_table_name}
+        WHERE Nem = ?
+        AND Korcsoport = ?
+        AND IskolaVég = ?
+        AND Megye = ?
+        AND TelepulesTipus = ?
+        """
+        df = pd.read_sql_query(query, self.conn, params=[nem, kor, education ,megye, tipus])
+        if df.empty:
+            return {}
+        return dict(zip(df["GazdAkt"], df["Arany"]))
+    def edueasy(self, nem: str, kor: str, megye: str, tipus: str,
+            ratio_table_name: str = "activity_ratios") -> dict:
+        """
+        Egy (Nem, Korcsoport, Megye, TelepulesTipus) csoporton belül visszaadja
+        az iskolai végzettségek megoszlását (arányait) dict formában:
+        {"Alapfok": 0.2, "Középfok": 0.5, ...}
+        """
+        import numpy as np
+        import pandas as pd
+
+        # ha a DB-ben gondolatjel (–) van a korcsoportban, egységesítünk
+        kor = kor.replace('-', '–').strip()
+
+        query = f"""
+        WITH edus AS (
+        SELECT
+            IskolaVég,
+            SUM(Lakossag) AS cnt
+        FROM {ratio_table_name}
+        WHERE Nem = ?
+            AND Korcsoport = ?
+            AND Megye = ?
+            AND TelepulesTipus = ?
+        GROUP BY IskolaVég
+        )
+        SELECT
+        IskolaVég,
+        cnt,
+        (SELECT SUM(cnt) FROM edus) AS total
+        FROM edus
+        ORDER BY IskolaVég;
+        """
+
+        df = pd.read_sql_query(query, self.conn, params=[nem, kor, megye, tipus])
+
+        if df.empty:
+            return {}
+
+        df["prob"] = np.where(df["total"].gt(0), df["cnt"] / df["total"], 0.0)
+        df.replace(np.nan, 0.0, inplace=True)
+
+        # opcionális: kerekítés prezentációhoz
+        # df["prob"] = df["prob"].round(4)
+        return dict(zip(df["IskolaVég"], df["prob"]))
 
     def create_ratio_index(self, ratio_table_name: str = "school_ratios"):
         """
