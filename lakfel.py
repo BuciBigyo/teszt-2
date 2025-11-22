@@ -5,7 +5,7 @@ import numpy as np
 from dataclasses import dataclass
 from functools import lru_cache
 import math,random
-from collections import deque
+from collections import deque, Counter
 from typing import Dict, List, Tuple, Optional, Any, Iterable
 from Table import tablakezelo
 
@@ -19,20 +19,39 @@ data.reset_table()
 helytab=pd.read_sql_query("select * from TelepulesOsszegzett",data.conn)
 laktab=pd.read_sql_query("select * from LakasOsszegzett",data.conn)
 
+with sqlite3.connect("populacio.db") as conn:
+    cur = conn.cursor()
+    cur.execute("PRAGMA foreign_keys=OFF;")   # safety when dropping
+    cur.execute("DROP TABLE IF EXISTS lakasfel_tag;")
+    cur.execute("DROP TABLE IF EXISTS LakasEpitő;")
+    conn.commit()
+
+def valoskor(nev)-> list:
+    kor=[]
+    q2 = 'SELECT COUNT(*) FROM Szimulació WHERE TRIM(Lakhely) = ? AND CAST(Kor AS INTEGER) BETWEEN ? AND ?;'
+    fiossz = data.conn.execute(q2, (nev, 0,15)).fetchone()[0]
+    felossz = data.conn.execute(q2, (nev, 15,30)).fetchone()[0]
+    kozossz = data.conn.execute(q2, (nev, 30,65)).fetchone()[0]
+    idossz= data.conn.execute(q2,(nev,65,200)).fetchone()[0]
+    kor.append(fiossz)
+    kor.append(felossz)
+    kor.append(kozossz)
+    kor.append(idossz)
+    return kor
 def lakokor(fiatal:int,felnott:int, kozepes:int, idos:int,nev:str)->list:
     macska=[]
-    q = 'SELECT COUNT(*) FROM "Szimulació" WHERE "Lakhely" = ? AND "Kor" < ?;'
-    fiossz = data.conn.execute(q, (nev, 15)).fetchone()[0]
-    q2 = 'SELECT COUNT(*) FROM "Szimulació" WHERE "Lakhely" = ? AND "Kor" <= ? AND "Kor" >?;'
-    felossz = data.conn.execute(q2, (nev, 29,14)).fetchone()[0]
-    kozossz = data.conn.execute(q2, (nev, 64,29)).fetchone()[0]
-    q3 = 'SELECT COUNT(*) FROM "Szimulació" WHERE "Lakhely" = ? AND "Kor" >= ?;'
-    idossz=data.conn.execute(q3, (nev, 65)).fetchone()[0]
-
+    q2 = 'SELECT COUNT(*) FROM Szimulació WHERE TRIM(Lakhely) = ? AND CAST(Kor AS INTEGER) BETWEEN ? AND ?;'
+    fiossz = data.conn.execute(q2, (nev, 0,15)).fetchone()[0]
+    felossz = data.conn.execute(q2, (nev, 15,30)).fetchone()[0]
+    kozossz = data.conn.execute(q2, (nev, 30,65)).fetchone()[0]
+    idossz= data.conn.execute(q2,(nev,65,200)).fetchone()[0]
+    print("Korok:",fiossz,felossz,kozossz,idossz)
+    print(fiatal,felnott,kozepes,idos)
     macska.append(-1*(fiossz-fiatal))
-    macska.append(-1*(felossz-felnott+fiatal))
+    macska.append(-1*(felossz-felnott+fiossz))
     macska.append(-1*(kozossz-kozepes))
     macska.append(-1*(idossz-idos))
+    print(macska)
     return macska
 def lakomunka(el:int,inak:int,dolg:int,munkanel:int,nev:str)->list:
     kutya=[]
@@ -56,7 +75,7 @@ def lakomunka(el:int,inak:int,dolg:int,munkanel:int,nev:str)->list:
     from Szimulació
     where Lakhely='{nev}' and munkaviszony='Ellátásban részesülő inaktív'
     """)
-
+    
     kutya.append(int(eltössz.iloc[0,0]-el))
     kutya.append(int(inakossz.iloc[0,0]-inak))
     kutya.append(int(dolgossz.iloc[0,0]-dolg))
@@ -229,6 +248,7 @@ def varhatoeloszlas(row)->pd.DataFrame:
     kozepes=row["Nincs 30–64 éves személy a háztartásban"]*0+row["1 személy 30–64 éves a háztartásban"]*1+row["2 személy 30–64 éves a háztartásban"]*2+row["3 vagy több személy 30–64 éves a háztartásban"]*3
     idos=row["Nincs 65 éves és idősebb személy a háztartásban"]*0+row["1 személy 65 éves és idősebb a háztartásban"]*1+row["2 személy 65 éves és idősebb a háztartásban"]*2+row["3 vagy több személy 65 éves és idősebb a háztartásban"]*3
     korelt=lakokor(fiatal,felnott,kozepes,idos,varos)
+    korval=valoskor(varos)
     k3e=k3kiszam(korelt,row["3 vagy több személy 15 évesnél fiatalabb a háztartásban"],row["3 vagy több személy 30 évesnél fiatalabb a háztartásban"],row["3 vagy több személy 30–64 éves a háztartásban"],row["3 vagy több személy 65 éves és idősebb a háztartásban"])
     dolg=row["Nincs foglalkoztatott a háztartásban"]*0+row["1 foglalkoztatott személy van a háztartásban"]*1+row["2 foglalkoztatott személy van a háztartásban"]*2+row["3 vagy több foglalkoztatott személy van a háztartásban"]*3
     munkanel=row["Nincs munkanélküli személy a háztartásban"]*0+row["1 munkanélküli személy van a háztartásban"]*1+row["2 munkanélküli személy van a háztartásban"]*2+row["3 vagy több munkanélküli személy van a háztartásban"]*3
@@ -256,10 +276,10 @@ def varhatoeloszlas(row)->pd.DataFrame:
         "H6+ szorzo":row["Hat+ személyes háztartás szorzo"],
         "Lakott népesség":row["Lakok"],
         "Lakható helyek száma":row["Lakott nepesseg"],
-        "Kor0-14":fiatal,
-        "Kor15-29":felnott-fiatal,
-        "Kor30-64":kozepes,
-        "Kor65+":idos,
+        "Kor0-14":korval[0],
+        "Kor15-29":korval[1],
+        "Kor30-64":korval[2],
+        "Kor65+":korval[3],
         "Kor0-14 0 person":row["Nincs 15 évesnél fiatalabb személy a háztartásban"],
         "Kor0-14 1 person":row["1 személy 15 évesnél fiatalabb a háztartásban"],
         "Kor0-14 2 person":row["2 személy 15 évesnél fiatalabb a háztartásban"],
@@ -1047,6 +1067,7 @@ for index, row in laktab.head(5).iterrows():
     hely = row.get("Helység megnevezése", lakhely_id)
 
     vege = varhatoeloszlas(row)   # <-- your function returns a dict
+    print(vege)
 
     # Build H_by_size dynamically from any H1..H12 keys present in vege
     H_by_size = {}
@@ -1110,6 +1131,8 @@ for index, row in laktab.head(5).iterrows():
     print(f"\nCity {index+1} ({hely}) – planned {summary['planned_people']} vs assigned {summary['assigned_people']}")
 
     persist_assignments(conn, assignments, run_id=f"run_city{index+1}_v1")
+
+
     
 
 
@@ -1121,78 +1144,6 @@ print("\n=== Combined template shape:", templates_all.shape, "===")
 
 
 
-
-varosell=data.query("""
-select Lakhely, Nem, count(*) as eredmeny
-from Szimulació
-Group by Lakhely, Nem
-""")
-
-korell = data.query("""
-SELECT 
-Lakhely,
-CASE
-WHEN CAST(Kor AS INTEGER) BETWEEN 0 AND 9  THEN '0-9 koru'
-WHEN CAST(Kor AS INTEGER) BETWEEN 10 AND 19 THEN '10-19 koru'
-WHEN CAST(Kor AS INTEGER) BETWEEN 20 AND 29 THEN '20-29 koru'
-WHEN CAST(Kor AS INTEGER) BETWEEN 30 AND 39 THEN '30-39 koru'
-WHEN CAST(Kor AS INTEGER) BETWEEN 40 AND 49 THEN '40-49 koru'
-WHEN CAST(Kor AS INTEGER) BETWEEN 50 AND 59 THEN '50-59 koru'
-WHEN CAST(Kor AS INTEGER) BETWEEN 60 AND 69 THEN '60-69 koru'
-WHEN CAST(Kor AS INTEGER) BETWEEN 70 AND 79 THEN '70-79 koru'
-WHEN CAST(Kor AS INTEGER) BETWEEN 80 AND 89 THEN '80-89 koru'
-ELSE '90+ koru'
-END AS AgeRange,
-COUNT(*) AS Count
-FROM Szimulació
-GROUP BY Lakhely, AgeRange
-ORDER BY Lakhely, MIN(CAST(Kor AS INTEGER))
-""")
-iskell=data.query(
-"""
-Select
-Lakhely, Oktatás, count(*) as okt
-from Szimulació
-Group by Lakhely, Oktatás
-"""
-)
-
-össznemell=data.query(
-    """
-    select nem, count(*)
-    from Szimulació
-    group by nem
-    """
-)
-összkorell=data.query(
-    """
-    SELECT 
-  CASE
-    WHEN CAST(Kor AS INTEGER) BETWEEN 0 AND 9  THEN '0-9 koru'
-    WHEN CAST(Kor AS INTEGER) BETWEEN 10 AND 19 THEN '10-19 koru'
-    WHEN CAST(Kor AS INTEGER) BETWEEN 20 AND 29 THEN '20-29 koru'
-    WHEN CAST(Kor AS INTEGER) BETWEEN 30 AND 39 THEN '30-39 koru'
-    WHEN CAST(Kor AS INTEGER) BETWEEN 40 AND 49 THEN '40-49 koru'
-    WHEN CAST(Kor AS INTEGER) BETWEEN 50 AND 59 THEN '50-59 koru'
-    WHEN CAST(Kor AS INTEGER) BETWEEN 60 AND 69 THEN '60-69 koru'
-    WHEN CAST(Kor AS INTEGER) BETWEEN 70 AND 79 THEN '70-79 koru'
-    WHEN CAST(Kor AS INTEGER) BETWEEN 80 AND 89 THEN '80-89 koru'
-    ELSE '90+ koru'
-    END AS AgeRange,
-    COUNT(*) AS Count
-    FROM Szimulació
-    GROUP BY  AgeRange
-    ORDER BY MIN(CAST(Kor AS INTEGER))
-    """
-)
-össziskell=data.query(
-    """
-    Select
-    Oktatás, count(*) as okt
-    from Szimulació
-    Group by Oktatás
-    """
-    )
 
 
 data.close()

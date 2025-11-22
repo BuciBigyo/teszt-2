@@ -1,5 +1,7 @@
 import sqlite3
 import pandas as pd
+import numpy as np
+
 from typing import Optional
 
 class tablakezelo:
@@ -210,17 +212,39 @@ class tablakezelo:
         self.conn.commit()
         print(f"✅ Inserted {len(df)} ratio rows into '{ratio_table_name}'")
 
+    def get_home_ratios(self, lmeret: str, korel: str, megye: str, tipus: str,
+                    ratio_table_name: str = "lakas_kor_gazdakt_ratios") -> tuple[dict, float]:
+
+        query = f"""
+        SELECT GazdAkt, Arany, Osszes
+        FROM {ratio_table_name}
+        WHERE Lakasmeret = ?
+        AND Koreloszlas = ?
+        AND Megye = ?
+        AND TelepulesTipus = ?
+        """
+        df = pd.read_sql_query(query, self.conn, params=[lmeret, korel, megye, tipus])
+        if df.empty:
+            # no data for this combination
+            return {}, 0.0
+
+        # dict: GazdAkt -> Arany
+        probs = dict(zip(df["GazdAkt"], df["Arany"]))
+        # all rows should share the same Osszes, take the first
+        total = float(df["Osszes"].iloc[0])
+
+        return probs, total
     def get_eratios(self, nem: str, kor: str, megye: str, tipus: str,
-                ratio_table_name: str = "school_ratios") -> dict:
+                    ratio_table_name: str = "school_ratios") -> tuple[dict, float]:
         """
         Query schooling ratios for a given demographic group.
-        Returns a dict: {IskolaTípus: Arany, ...}
+        Returns a tuple: ({IskolaTípus: Arany, ...}, summ)
         """
         kor = kor.replace('-', '–') 
-        if kor=="0–5 éves":
-            return {"6 év alatti": 1.0}
+        if kor == "0–5 éves":
+            return {"6 év alatti": 1.0}, 0.0
         query = f"""
-        SELECT IskolaTípus, Arany
+        SELECT IskolaTípus, Arany, Osszes
         FROM {ratio_table_name}
         WHERE Nem = ?
         AND Korcsoport = ?
@@ -228,10 +252,13 @@ class tablakezelo:
         AND TelepulesTipus = ?
         """
         df = pd.read_sql_query(query, self.conn, params=[nem, kor, megye, tipus])
-
+        print(df)
+    
         if df.empty:
-            return {}
-        return dict(zip(df["IskolaTípus"], df["Arany"]))
+            return {}, 0.0  # Ensure two values are returned
+        a=dict(zip(df["IskolaTípus"], df["Arany"])), (df["Osszes"].iloc[0])
+        print(a)
+        return dict(zip(df["IskolaTípus"], df["Arany"])), (df["Osszes"].iloc[0])
     def get_aratios(self, nem: str, kor: str,education:str, megye: str, tipus: str,
                 ratio_table_name: str = "activity_ratios") -> dict:
         """
@@ -252,6 +279,26 @@ class tablakezelo:
         if df.empty:
             return {}
         return dict(zip(df["GazdAkt"], df["Arany"]))
+    def get_workratios(self, nem: str, kor: str,education:str, megye: str, tipus: str,
+                ratio_table_name: str = "employment_ratios") -> dict:
+        """
+        Query schooling ratios for a given demographic group.
+        Returns a dict: {IskolaTípus: Arany, ...}
+        """       
+        kor = kor.replace('-', '–') 
+        query = f"""
+        SELECT Munkatípus, Arany
+        FROM {ratio_table_name}
+        WHERE Nem = ?
+        AND Korcsoport = ?
+        AND IskolaVég = ?
+        AND Megye = ?
+        AND TelepulesTipus = ?
+        """
+        df = pd.read_sql_query(query, self.conn, params=[nem, kor, education ,megye, tipus])
+        if df.empty:
+            return {}
+        return dict(zip(df["Munkatípus"], df["Arany"]))
     def edueasy(self, nem: str, kor: str, megye: str, tipus: str,
             ratio_table_name: str = "activity_ratios") -> dict:
         """
@@ -259,8 +306,6 @@ class tablakezelo:
         az iskolai végzettségek megoszlását (arányait) dict formában:
         {"Alapfok": 0.2, "Középfok": 0.5, ...}
         """
-        import numpy as np
-        import pandas as pd
 
         # ha a DB-ben gondolatjel (–) van a korcsoportban, egységesítünk
         kor = kor.replace('-', '–').strip()

@@ -233,7 +233,7 @@ def szimulacio(index:int,row) -> pd.DataFrame:
             age = random_age_from_range(age_range)
             kor1=korcsoport1(age)
             kor2=korcsoport2(age)
-            konkráta=data.get_eratios(g,kor1,megye,teltip)
+            konkráta, szumma=data.get_eratios(g,kor1,megye,teltip)
             education = assign_education(age,konkráta)
             ered=data.edueasy(g,kor2,megye,teltip)
             edured=edureduction(age,ered)
@@ -435,7 +435,12 @@ Group by Lakhely, Oktatás
     Group by Oktatás
     """
     )
-
+print("Város nemek szerint:\n",varosell)
+print("Város korcsoportok szerint:\n",korell)
+print("Város iskolázottság szerint:\n",iskell)
+print("Összesített nemek szerint:\n",össznemell)
+print("Összesített korcsoportok szerint:\n",összkorell)
+print("Összesített iskolázottság szerint:\n",össziskell)    
 
 data.close()
 

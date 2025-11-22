@@ -19,6 +19,71 @@ na=pd.read_excel("flat_A_nepesseg_adatok_telepulesenkent.xlsx")
 hi=pd.read_excel("hier_iskolaba_jaro_nepesseg.xlsx",header=[0,1])
 hfa=pd.read_excel("hier_foglalkoztatott_nepesseg_foglalkozasi_focsoport.xlsx",header=[0,1])
 hga=pd.read_excel("hier_gazdasagi_aktivitas_varmegyenkent_telepulestipusonkent.xlsx",header=[0,1])
+ils=pd.read_excel("duplicate_flat_Intezeti_es_hajl.xlsx")
+nkh=pd.read_excel("hier_nemek_korosztalyonkent.xlsx",header=[0,1])
+rlc=pd.read_excel("hier_lak_komb.xlsx",header=[0,1])
+
+nkh.rename(columns={nkh.columns[0]:("","Nem"),
+                    nkh.columns[1]:("","Korcsoport"),},inplace=True)
+nkh.columns = [
+    col[1] if col[1] in ["Nem", "Korcsoport"]
+    else f"{col[0].strip()} | {col[1].strip()}"
+    for col in nkh.columns
+]
+nkh.rename(columns={
+    ('Unnamed: 0_level_0 | Unnamed: 0_level_1'): 'Nem',
+    ('Unnamed: 1_level_0 | Unnamed: 1_level_1'): 'Korcsoport'
+    },inplace=True)
+nkh[["Nem","Korcsoport"]]=nkh[["Nem","Korcsoport"]].ffill()
+
+nkh_lin = nkh.melt(
+    id_vars=["Nem", "Korcsoport"],
+    var_name="Location",
+    value_name="Lakossag"
+)
+nkh_lin[["Megye", "TelepulesTipus"]] = nkh_lin["Location"].str.split(" \| ",n=1, expand=True)
+nkh_lin.drop(columns="Location", inplace=True)
+data.insert_ratios(nkh_lin,"Korok_nemenként_regio")
+
+
+rlc.rename(columns={
+    rlc.columns[0]: ("", "Lakasmeret"),
+    rlc.columns[1]: ("", "Koreloszlas"),
+    rlc.columns[2]: ("", "GazdAkt")
+}, inplace=True)
+
+rlc.columns = [
+    col[1] if col[1] in ["Lakasmeret", "Koreloszlas","GazdAkt"]
+    else f"{col[0].strip()} | {col[1].strip()}"
+    for col in rlc.columns
+]
+
+rlc.rename(columns={
+    ('Unnamed: 0_level_0 | Unnamed: 0_level_1'): 'Lakasmeret',
+    ('Unnamed: 1_level_0 | Unnamed: 1_level_1'): 'Koreloszlas',
+    ('Unnamed: 2_level_0 | Unnamed: 2_level_1'): 'GazdAkt',
+    },inplace=True)
+rlc[["Lakasmeret","Koreloszlas"]]=rlc[["Lakasmeret","Koreloszlas"]].ffill()
+rlc_lin = rlc.melt(
+    id_vars=["Lakasmeret", "Koreloszlas","GazdAkt"],
+    var_name="Location",
+    value_name="Lakossag"
+)
+
+rlc[["Lakasmeret","Koreloszlas"]]=rlc[["Lakasmeret","Koreloszlas"]].ffill()
+rlc_lin[["Megye", "TelepulesTipus"]] = rlc_lin["Location"].str.split(" \| ",n=1, expand=True)
+rlc_lin.drop(columns="Location", inplace=True)
+ottossz=(
+    rlc_lin
+    .groupby(["Lakasmeret", "Koreloszlas", "Megye", "TelepulesTipus"], as_index=False)["Lakossag"]
+    .sum()
+    .rename(columns={"Lakossag": "Osszes"})
+)
+
+ottratio=rlc_lin.merge(ottossz, on=["Lakasmeret","Koreloszlas","Megye","TelepulesTipus"])
+ottratio["Arany"]=ottratio["Lakossag"]/ottratio["Osszes"]
+ottratio["Arany"] = ottratio["Arany"].replace([np.inf, -np.inf], 0).fillna(0)
+data.insert_ratios(ottratio, "lakas_kor_gazdakt_ratios")
 
 hga.rename(columns={
     hga.columns[0]: ("", "Nem"),
@@ -45,8 +110,6 @@ hga_lin = hga.melt(
     var_name="Location",
     value_name="Lakossag"
 )
-print("Gazdasági aktivitás adatok:")
-print(hga_lin.head())
 hga[["Nem","Korcsoport","Iskolavég"]]=hga[["Nem","Korcsoport","IskolaVég"]].ffill()
 hga_lin[["Megye", "TelepulesTipus"]] = hga_lin["Location"].str.split(" \| ",n=1, expand=True)
 hga_lin.drop(columns="Location", inplace=True)
@@ -58,12 +121,10 @@ aktossz=(
     .rename(columns={"Lakossag": "Osszes"})
 )
 aktratio=hga_lin.merge(aktossz, on=["Nem","Korcsoport","IskolaVég","Megye","TelepulesTipus"])
-print(aktratio.head(20))
 
 aktratio["Arany"]=aktratio["Lakossag"]/aktratio["Osszes"]
 aktratio["Arany"] = aktratio["Arany"].replace([np.inf, -np.inf], 0).fillna(0)
 
-print(aktratio.head(20))
 data.insert_ratios(aktratio, "activity_ratios")
 
 
@@ -141,7 +202,6 @@ tanratio=lin.merge(tanosz, on=["Nem","Korcsoport","Megye","TelepulesTipus"])
 tanratio["Arany"]=tanratio["Lakossag"]/tanratio["Osszes"]
 tanratio["Arany"] = tanratio["Arany"].replace([np.inf, -np.inf], 0).fillna(0)
 
-print(tanratio.head(200))
 data.insert_ratios(tanratio, "school_ratios")
 
 names=ht["Helység megnevezése"]
@@ -151,171 +211,249 @@ lakasszam=ht["Lakások száma"]
 
 helytab=ht[["Helység megnevezése","Vármegye","Településtípus","Lakó-népesség","Lakások száma"]]
 helytab=helytab.copy()
-helytab["Ferfi"]=None
-helytab["No"]=None
-helytab["Lakok"]=helytab["Ferfi"]+helytab["No"]
-helytab["0-9 koru"]=None
-helytab["10-19 koru"]=None
-helytab["20-29 koru"]=None
-helytab["30-39 koru"]=None
-helytab["40-49 koru"]=None
-helytab["50-59 koru"]=None
-helytab["60-69 koru"]=None
-helytab["70-79 koru"]=None
-helytab["80-89 koru"]=None
-helytab["90+ koru"]=None
-helytab["Nőtlen"]=None
-helytab["Házas"]=None
-helytab["Özvegy"]=None
-helytab["Elvált"]=None
-helytab["15 évnél fiatalabb"]=None
-helytab["Helység típus"]=None
-helytab["Helység megye"]=None
 laktab=helytab
-   
-for index,row in helytab.iterrows():
-
-    név=row.iloc[0]
-    
+def as_int(x, default=0):
+    """Coerce x to int; NaN/None/invalid -> default."""
     try:
-        adatok=na[név]
-        lakadat=hl[név]
-        hazadat=ha[név]
+        v = pd.to_numeric(x)
+        if pd.isna(v):
+            return default
+        return int(round(float(v)))
+    except Exception:
+        return default
 
-        helytab.loc[index, "Ferfi"]  = adatok[0]
-        helytab.loc[index, "No"]  = adatok[1]
-        helytab.loc[index, "Lakok"]  = adatok[0] + adatok[1]
-        helytab.loc[index, "0-9 koru"]  = adatok[2]
-        helytab.loc[index, "10-19 koru"]  = adatok[3]
-        helytab.loc[index, "20-29 koru"]  = adatok[4]
-        helytab.loc[index, "30-39 koru"]  = adatok[5]
-        helytab.loc[index, "40-49 koru"] = adatok[6]
-        helytab.loc[index, "50-59 koru"] = adatok[7]
-        helytab.loc[index, "60-69 koru"] = adatok[8]
-        helytab.loc[index, "70-79 koru"] = adatok[9]
-        helytab.loc[index, "80-89 koru"] = adatok[10]
-        helytab.loc[index, "90+ koru "] = adatok[11]
-        helytab.loc[index,"7 évnél fiatalabb"]= adatok[34]
-        helytab.loc[index,"Nincs 8 ált."]=adatok[29]
-        helytab.loc[index,"8 általános"]=adatok[30]
-        helytab.loc[index,"Szakmai okl"]=adatok[31]
-        helytab.loc[index,"Érettségi"]=adatok[32]
-        helytab.loc[index,"Diploma/Oklevél"]=adatok[33]
-        helytab.loc[index,"Nőtlen"]=adatok[18]
-        helytab.loc[index,"Házas"]=adatok[19]
-        helytab.loc[index,"Özvegy"]=adatok[20]
-        helytab.loc[index,"Elvált"]=adatok[21]
-        helytab.loc[index,"15 évnél fiatalabb"]=adatok[22]
-        helytab.loc[index,"Foglalkoztatott"]=adatok[35]
-        helytab.loc[index,"Ellátásban részesülő inaktív"]=adatok[37]
-        helytab.loc[index,"Munkanélküli"]=adatok[36]
-        helytab.loc[index,"Eltartott"]=adatok[38]
-        helytab.loc[index,"Lakott lakás"]=lakadat[0]
-        helytab.loc[index,"1 szoba"]=lakadat[1]
-        helytab.loc[index,"2 szoba"]=lakadat[2]
-        helytab.loc[index,"3 szoba"]=lakadat[3]
-        helytab.loc[index,"4 vagy több szoba"]=lakadat[4]
-        helytab.loc[index,"1 személyes háztartás"]=hazadat[0]
-        helytab.loc[index,"2 személyes háztartás"]=hazadat[1]
-        helytab.loc[index,"3 személyes háztartás"]=hazadat[2]
-        helytab.loc[index,"4 személyes háztartás"]=hazadat[3]
-        helytab.loc[index,"5 személyes háztartás"]=hazadat[4]
-        helytab.loc[index,"6+ személyes háztartás"]=hazadat[5]
-        helytab.loc[index,"Egy családból álló háztartás"]=hazadat[6]
-        helytab.loc[index,"Több családból álló háztartás"]=hazadat[9]
-        helytab.loc[index,"Nem családháztartás"]=hazadat[12]
+def safe_get(seq, i, default=0):
+    """Index a list/tuple safely + cast to int."""
+    try:
+        return as_int(seq[i], default)
+    except Exception:
+        return default
 
-    
+def safe_div(num, den, default=0.0):
+    """num/den with zero/NaN protection."""
+    try:
+        den = float(den)
+        if den == 0:
+            return default
+        return float(num) / den
+    except Exception:
+        return default
+   
+for index, row in helytab.iterrows():
+    név = row.iloc[0]
+    try:
+        adatok  = na[név]   # [Férfi, Nő, 0-9, 10-19, ..., 90+, 15- férfi, 15-64 férfi, 65+ férfi, 15- nő, 15-64 nő, 65+ nő, ..., iskolai szintek, ..., 7 évnél fiatalabb, fogl., munkan., inaktív, eltartott]
+        lakadat = hl[név]   # [Lakott lakás, 1 szoba, 2 szoba, 3 szoba, 4+ szoba]
+        hazadat = ha[név]   # háztartás méret és összetétel indexek szerint
+        intezet = ils[név]  # [ ... , 10: Intézeti háztartásban élő személy, 11: Hajléktalan]
 
-        
-    except:
-        print("Nincs ilyen város",név)
+        ferfi = safe_get(adatok, 0)
+        no    = safe_get(adatok, 1)
+        lakok = ferfi + no
+        helykül  = abs(ferfi - no)
+        helyszaz = safe_div(helykül * 100.0, lakok, default=0.0)
+
+        tarolo = {
+            "Ferfi": ferfi,
+            "No": no,
+            "Lakok": lakok,
+            "Nemkulonbseg": helykül,
+            "Különbség százalék": helyszaz,
+
+            "Intézeti háztartásban élő személy": safe_get(intezet, 10),
+            "Hajléktalan": safe_get(intezet, 11),
+
+            "0-9 koru":   safe_get(adatok, 2),
+            "10-19 koru": safe_get(adatok, 3),
+            "20-29 koru": safe_get(adatok, 4),
+            "30-39 koru": safe_get(adatok, 5),
+            "40-49 koru": safe_get(adatok, 6),
+            "50-59 koru": safe_get(adatok, 7),
+            "60-69 koru": safe_get(adatok, 8),
+            "70-79 koru": safe_get(adatok, 9),
+            "80-89 koru": safe_get(adatok,10),
+            "90+ koru ":  safe_get(adatok,11),
+
+            "15 évesnél fiatalabb férfi": safe_get(adatok,12),
+            "15-64 éves férfi":           safe_get(adatok,13),
+            "65 éves és idősebb férfi":   safe_get(adatok,14),
+            "15 évesnél fiatalabb nő":    safe_get(adatok,15),
+            "15-64 éves nő":              safe_get(adatok,16),
+            "65 éves és idősebb nő":      safe_get(adatok,17),
+
+            "Nőtlen": safe_get(adatok,18),
+            "Házas":  safe_get(adatok,19),
+            "Özvegy": safe_get(adatok,20),
+            "Elvált": safe_get(adatok,21),
+
+            "15 évnél fiatalabb személy": safe_get(adatok,22),
+            "7 évnél fiatalabb":          safe_get(adatok,34),
+
+            "Nincs 8 ált.":    safe_get(adatok,29),
+            "8 általános":     safe_get(adatok,30),
+            "Szakmai okl":     safe_get(adatok,31),
+            "Érettségi":       safe_get(adatok,32),
+            "Diploma/Oklevél": safe_get(adatok,33),
+
+            "Foglalkoztatott":              safe_get(adatok,35),
+            "Munkanélküli":                  safe_get(adatok,36),
+            "Ellátásban részesülő inaktív": safe_get(adatok,37),
+            "Eltartott":                    safe_get(adatok,38),
+
+            "Lakott lakás":      safe_get(lakadat,0),
+            "1 szoba":           safe_get(lakadat,1),
+            "2 szoba":           safe_get(lakadat,2),
+            "3 szoba":           safe_get(lakadat,3),
+            "4 vagy több szoba": safe_get(lakadat,4),
+
+            "1 személyes háztartás": safe_get(hazadat,0),
+            "2 személyes háztartás": safe_get(hazadat,1),
+            "3 személyes háztartás": safe_get(hazadat,2),
+            "4 személyes háztartás": safe_get(hazadat,3),
+            "5 személyes háztartás": safe_get(hazadat,4),
+            "6+ személyes háztartás": safe_get(hazadat,5),
+
+            "Egy családból álló háztartás": safe_get(hazadat,6),
+            "Több családból álló háztartás": safe_get(hazadat,9),
+            "Nem családháztartás":          safe_get(hazadat,12),
+        }
+
+        helytab.loc[index, list(tarolo.keys())] = list(tarolo.values())
+
+    except Exception as e:
+        print("Nincs ilyen város", név, "Hiba:", e)
 
 for index, row in laktab.iterrows():
-    név=row.iloc[0]
+    név = row.iloc[0]
     try:
-        lakadat=hl[név]
-        hazadat=ha[név]
-        adatok=na[név]
-        laktab.loc[index, "Ferfi"]  = adatok[0]
-        laktab.loc[index, "No"]  = adatok[1]
-        laktab.loc[index, "Lakok"]  = adatok[0] + adatok[1]
-        laktab.loc[index,"Lakott lakás"]=lakadat[0]
-        laktab.loc[index,"1 szoba"]=lakadat[1]
-        laktab.loc[index,"2 szoba"]=lakadat[2]
-        laktab.loc[index,"3 szoba"]=lakadat[3]
-        laktab.loc[index,"4 vagy több szoba"]=lakadat[4]
-        laktab.loc[index,"1 személyes háztartás"]=hazadat[0]
-        laktab.loc[index,"2 személyes háztartás"]=hazadat[1]
-        laktab.loc[index,"3 személyes háztartás"]=hazadat[2]
-        laktab.loc[index,"4 személyes háztartás"]=hazadat[3]
-        laktab.loc[index,"5 személyes háztartás"]=hazadat[4]
-        laktab.loc[index,"6+ személyes háztartás"]=hazadat[5]
+        adatok  = na[név]   # [Ferfi, No, ...]
+        lakadat = hl[név]   # rooms etc.
+        hazadat = ha[név]   # household distributions (big vector)
+        intezet = ils[név]  # institutional, homeless
+
+        # --- basic people counts + % diff ---
+        ferfi  = safe_get(adatok, 0)
+        no     = safe_get(adatok, 1)
+        lakok  = ferfi + no
+        nemkül = abs(ferfi - no)
+        kulsz  = safe_div(nemkül * 100.0, lakok, default=0.0)
+
+        # --- household size counts ---
+        H1 = safe_get(hazadat, 0)
+        H2 = safe_get(hazadat, 1)
+        H3 = safe_get(hazadat, 2)
+        H4 = safe_get(hazadat, 3)
+        H5 = safe_get(hazadat, 4)
+        H6p = safe_get(hazadat, 5)   # 6+
 
 
-        laktab.loc[index,"Lakott nepesseg"]=hazadat[0]*1+hazadat[1]*2+hazadat[2]*3+hazadat[3]*4+hazadat[4]*5+hazadat[5]*6
-        a=(hazadat[0]*1+hazadat[1]*2+hazadat[2]*3+hazadat[3]*4+hazadat[4]*5+hazadat[5]*6)-adatok[0]-adatok[1]
-        if a>0 or a<0:
-            if hazadat[5]!=0:
-                laktab.loc[index,"Hat+ személyes háztartás szorzo"]=-1*a/hazadat[5]+6
-            else:
-                laktab.loc[index,"Hat+ személyes háztartás szorzo"]=6
-        elif a==0:
-            laktab.loc[index,"Hat+ személyes háztartás szorzo"]=6
-        print("Lakott népesség:",laktab.loc[index,"Lakott nepesseg"])
-        print("különbség:",a)
-        print("Lakó népesség:",adatok[0]+adatok[1])
-        print(laktab.loc[index,"Hat+ személyes háztartás szorzo"])
-            
+        # computed capacity if we treat 6+ as "6" heads baseline
+        lakott_nep = 1*H1 + 2*H2 + 3*H3 + 4*H4 + 5*H5 + 6*H6p
+        diff = lakott_nep - lakok
+        inst_diff=lakott_nep-lakok+safe_get(intezet,10)+safe_get(intezet,11)
+        # match your original: -a/hazadat[5] + 6  (safe if H6p==0)
+        hatplusz_szorzo = 6 if H6p == 0 else 6 - safe_div(diff, H6p, default=0.0)
+        hatplusz_inst=6 if H6p == 0 else 6 - safe_div(inst_diff, H6p,default=0.0)
 
+        tarolo = {
+            # people + simple diagnostics
+            "Ferfi": ferfi,
+            "No": no,
+            "Lakok": lakok,
+            "Nemkulonbseg": nemkül,
+            "Különbség százalék": kulsz,
 
-        laktab.loc[index,"Egy családból álló háztartás"]=hazadat[6]
-        laktab.loc[index,"Több családból álló háztartás"]=hazadat[9]
-        laktab.loc[index,"Nem családháztartás"]=hazadat[12]
-        laktab.loc[index,"Nincs 15 évesnél fiatalabb személy a háztartásban"]=hazadat[14]
-        laktab.loc[index,"1 személy 15 évesnél fiatalabb a háztartásban"]=hazadat[15]
-        laktab.loc[index,"2 személy 15 évesnél fiatalabb a háztartásban"]=hazadat[16]
-        laktab.loc[index,"3 vagy több személy 15 évesnél fiatalabb a háztartásban"]=hazadat[17]
-        laktab.loc[index,"Nincs 30 évesnél fiatalabb személy a háztartásban"]=hazadat[18]
-        laktab.loc[index,"1 személy 30 évesnél fiatalabb a háztartásban"]=hazadat[19]
-        laktab.loc[index,"2 személy 30 évesnél fiatalabb a háztartásban"]=hazadat[20]
-        laktab.loc[index,"3 vagy több személy 30 évesnél fiatalabb a háztartásban"]=hazadat[21]
-        laktab.loc[index,"Nincs 30–64 éves személy a háztartásban"]=hazadat[22]
-        laktab.loc[index,"1 személy 30–64 éves a háztartásban"]=hazadat[23]
-        laktab.loc[index,"2 személy 30–64 éves a háztartásban"]=hazadat[24]
-        laktab.loc[index,"3 vagy több személy 30–64 éves a háztartásban"]=hazadat[25]
-        laktab.loc[index,"Nincs 65 éves és idősebb személy a háztartásban"]=hazadat[26]
-        laktab.loc[index,"1 személy 65 éves és idősebb a háztartásban"]=hazadat[27]
-        laktab.loc[index,"2 személy 65 éves és idősebb a háztartásban"]=hazadat[28]
-        laktab.loc[index,"3 vagy több személy 65 éves és idősebb a háztartásban"]=hazadat[29]  
-        laktab.loc[index,"Csak 30 évesnél fiatalabb személy van a háztartásban"]=hazadat[30]
-        laktab.loc[index,"Csak 30–64 éves személy van a háztartásban"]=hazadat[31]
-        laktab.loc[index,"Csak 65 éves és idősebb személy van a háztartásban"]=hazadat[    32]
-        laktab.loc[index,"30 évesnél fiatalabb és 30–64 éves személyek vannak a háztartásban"]=hazadat[ 33]
-        laktab.loc[index,"30 évesnél fiatalabb és 65 éves és idősebb személyek vannak a háztartásban"]=hazadat[ 34]
-        laktab.loc[index,"30–64 éves és 65 éves és idősebb személyek vannak a háztartásban"]=hazadat[ 35]
-        laktab.loc[index,"30 évesnél fiatalabb, 30–64 éves és 65 éves és idősebb személyek vannak a háztartásban"]=hazadat[ 36]
-        laktab.loc[index,"Nincs foglalkoztatott személy a háztartásban"]=hazadat[  37]
-        laktab.loc[index,"1 foglalkoztatott személy van a háztartásban"]=hazadat[ 38]
-        laktab.loc[index,"2 foglalkoztatott személy van a háztartásban"]=hazadat[  39]
-        laktab.loc[index,"3 vagy több foglalkoztatott személy van a háztartásban"]=hazadat[ 40]
-        laktab.loc[index,"Nincs munkanélküli személy a háztartásban"]=hazadat[ 41]
-        laktab.loc[index,"1 munkanélküli személy van a háztartásban"]=hazadat[ 42]
-        laktab.loc[index,"2 munkanélküli személy van a háztartásban"]=hazadat[ 43]
-        laktab.loc[index,"3 vagy több munkanélküli személy van a háztartásban"]=hazadat[ 44]
-        laktab.loc[index,"Nincs ellátásban részesülő inaktív személy a háztartásban"]=hazadat[ 45]
-        laktab.loc[index,"1 ellátásban részesülő inaktív személy van a háztartásban"]=hazadat[ 46]
-        laktab.loc[index,"2 ellátásban részesülő inaktív személy van a háztartásban"]=hazadat[ 47]
-        laktab.loc[index,"3 vagy több ellátásban részesülő inaktív személy van a háztartásban"]=hazadat[ 48]
-        laktab.loc[index,"Nincs eltartott személy a háztartásban"]=hazadat[49]
-        laktab.loc[index,"1 eltartott személy van a háztartásban"]=hazadat[ 50]
-        laktab.loc[index,"2 eltartott személy van a háztartásban"]=hazadat[ 51]
-        laktab.loc[index,"3 vagy több eltartott személy van a háztartásban"]=hazadat[  52]
-        laktab.loc[index,"Van foglalkoztatott a háztartásban"]=hazadat[    53]
-        laktab.loc[index,"Nincs foglalkoztatott a háztartásban"]=hazadat[   54]
+            # rooms / dwellings
+            "Lakott lakás":        safe_get(lakadat, 0),
+            "1 szoba":             safe_get(lakadat, 1),
+            "2 szoba":             safe_get(lakadat, 2),
+            "3 szoba":             safe_get(lakadat, 3),
+            "4 vagy több szoba":   safe_get(lakadat, 4),
 
-    except:
-        print("Nincs ilyen város",név)
+            # household sizes
+            "1 személyes háztartás": H1,
+            "2 személyes háztartás": H2,
+            "3 személyes háztartás": H3,
+            "4 személyes háztartás": H4,
+            "5 személyes háztartás": H5,
+            "6+ személyes háztartás": H6p,
+
+            # institutional / homeless
+            "Intézeti háztartásban élő személy": safe_get(intezet, 10),
+            "Hajléktalan":                       safe_get(intezet, 11),
+
+            # derived capacity + correction
+            "Lakott nepesseg": lakott_nep,
+            "Különbség":       diff,
+            "Intézeti/Hajléktalan korrigált különbség": inst_diff,
+            "Hat+ személyes háztartás szorzo": hatplusz_szorzo,
+            "Hat+ személyes háztartás szorzo (int./hajl. korrigált)": hatplusz_inst,
+
+            # household type blocks
+            "Egy családból álló háztartás":  safe_get(hazadat, 6),
+            "Több családból álló háztartás": safe_get(hazadat, 9),
+            "Nem családháztartás":          safe_get(hazadat, 12),
+
+            # age composition per household (0/1/2/3+)
+            "Nincs 15 évesnél fiatalabb személy a háztartásban": safe_get(hazadat, 14),
+            "1 személy 15 évesnél fiatalabb a háztartásban":     safe_get(hazadat, 15),
+            "2 személy 15 évesnél fiatalabb a háztartásban":     safe_get(hazadat, 16),
+            "3 vagy több személy 15 évesnél fiatalabb a háztartásban": safe_get(hazadat, 17),
+
+            "Nincs 30 évesnél fiatalabb személy a háztartásban": safe_get(hazadat, 18),
+            "1 személy 30 évesnél fiatalabb a háztartásban":     safe_get(hazadat, 19),
+            "2 személy 30 évesnél fiatalabb a háztartásban":     safe_get(hazadat, 20),
+            "3 vagy több személy 30 évesnél fiatalabb a háztartásban": safe_get(hazadat, 21),
+
+            "Nincs 30–64 éves személy a háztartásban": safe_get(hazadat, 22),
+            "1 személy 30–64 éves a háztartásban":     safe_get(hazadat, 23),
+            "2 személy 30–64 éves a háztartásban":     safe_get(hazadat, 24),
+            "3 vagy több személy 30–64 éves a háztartásban": safe_get(hazadat, 25),
+
+            "Nincs 65 éves és idősebb személy a háztartásban": safe_get(hazadat, 26),
+            "1 személy 65 éves és idősebb a háztartásban":     safe_get(hazadat, 27),
+            "2 személy 65 éves és idősebb a háztartásban":     safe_get(hazadat, 28),
+            "3 vagy több személy 65 éves és idősebb a háztartásban": safe_get(hazadat, 29),
+
+            # “only / combination” age patterns
+            "Csak 30 évesnél fiatalabb személy van a háztartásban":                          safe_get(hazadat, 30),
+            "Csak 30–64 éves személy van a háztartásban":                                   safe_get(hazadat, 31),
+            "Csak 65 éves és idősebb személy van a háztartásban":                           safe_get(hazadat, 32),
+            "30 évesnél fiatalabb és 30–64 éves személyek vannak a háztartásban":           safe_get(hazadat, 33),
+            "30 évesnél fiatalabb és 65 éves és idősebb személyek vannak a háztartásban":   safe_get(hazadat, 34),
+            "30–64 éves és 65 éves és idősebb személyek vannak a háztartásban":             safe_get(hazadat, 35),
+            "30 évesnél fiatalabb, 30–64 éves és 65 éves és idősebb személyek vannak a háztartásban": safe_get(hazadat, 36),
+
+            # labour counts per household (0/1/2/3+)
+            "Nincs foglalkoztatott személy a háztartásban":        safe_get(hazadat, 37),
+            "1 foglalkoztatott személy van a háztartásban":        safe_get(hazadat, 38),
+            "2 foglalkoztatott személy van a háztartásban":        safe_get(hazadat, 39),
+            "3 vagy több foglalkoztatott személy van a háztartásban": safe_get(hazadat, 40),
+
+            "Nincs munkanélküli személy a háztartásban":           safe_get(hazadat, 41),
+            "1 munkanélküli személy van a háztartásban":           safe_get(hazadat, 42),
+            "2 munkanélküli személy van a háztartásban":           safe_get(hazadat, 43),
+            "3 vagy több munkanélküli személy van a háztartásban": safe_get(hazadat, 44),
+
+            "Nincs ellátásban részesülő inaktív személy a háztartásban": safe_get(hazadat, 45),
+            "1 ellátásban részesülő inaktív személy van a háztartásban": safe_get(hazadat, 46),
+            "2 ellátásban részesülő inaktív személy van a háztartásban": safe_get(hazadat, 47),
+            "3 vagy több ellátásban részesülő inaktív személy van a háztartásban": safe_get(hazadat, 48),
+
+            "Nincs eltartott személy a háztartásban":  safe_get(hazadat, 49),
+            "1 eltartott személy van a háztartásban":  safe_get(hazadat, 50),
+            "2 eltartott személy van a háztartásban":  safe_get(hazadat, 51),
+            "3 vagy több eltartott személy van a háztartásban": safe_get(hazadat, 52),
+
+            "Van foglalkoztatott a háztartásban":   safe_get(hazadat, 53),
+            "Nincs foglalkoztatott a háztartásban": safe_get(hazadat, 54),
+        }
+
+        # one-shot write
+        laktab.loc[index, list(tarolo.keys())] = list(tarolo.values())
+
+    except Exception as e:
+        print("Nincs ilyen város", név, "| Hiba:", e)
 
 
 num_cols = helytab.columns.difference(["Helység megnevezése","Vármegye","Településtípus"])
