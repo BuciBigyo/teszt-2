@@ -11,3 +11,4 @@
 .DS_Store
 populacio.db
 populacio.db-wal
+populacio.db-shm
