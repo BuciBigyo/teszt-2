@@ -5,7 +5,9 @@
 *.xlsx
 *.xls
 *.csv
+*.db-wal
 
 # Ignore Mac system files
 .DS_Store
 populacio.db
+populacio.db-wal

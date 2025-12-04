@@ -31,8 +31,8 @@ laktab = pd.read_sql_query("SELECT * FROM LakasOsszegzett", data.conn)
 with sqlite3.connect(DB_PATH) as conn_drop:
     cur_d = conn_drop.cursor()
     cur_d.execute("PRAGMA foreign_keys=OFF;")
-    cur_d.execute("DROP TABLE IF EXISTS lakasfel_tag;")
-    cur_d.execute("DROP TABLE IF EXISTS LakasEpitő;")
+    cur_d.execute("DROP TABLE IF EXISTS lakasfel_tag_ver_2;")
+    cur_d.execute("DROP TABLE IF EXISTS LakasEpitő_ver_2;")
     conn_drop.commit()
 
 # =========================================================
@@ -50,10 +50,10 @@ def _as_int(x, default=0) -> int:
 # Real age totals from population table (by city *name*)
 def valoskor(nev: str) -> Dict[str, int]:
     """
-    Return age bins <15, 15-29, 30-64, 65+ from Szimuláció for given city name.
+    Return age bins <15, 15-29, 30-64, 65+ from Szimulació for given city name.
     """
     q = """SELECT COUNT(*)
-           FROM Szimuláció 
+           FROM Szimulació 
            WHERE TRIM(Lakhely) = ? AND CAST(Kor AS INTEGER) BETWEEN ? AND ?;"""
     conn = data.conn
     fi  = conn.execute(q, (nev, 0, 14)).fetchone()[0]
@@ -228,7 +228,7 @@ def varhatoeloszlas(row: pd.Series) -> Dict[str, Any]:
     # --- Institutional count from laktab (census) ---
     inst_count = _as_int(row.get("Intézeti háztartásban élő személy", 0), 0)
 
-    # --- Observed age totals from Szimuláció ---
+    # --- Observed age totals from Szimulació ---
     obs_age = valoskor(varos)  # {"<15":..., ...}
 
     # --- Find region info in TelepulesOsszegzett ---
@@ -580,13 +580,13 @@ def build_household_templates_for_city(
 # =========================================================
 
 CITY_COL = "LakhelyID"
-PEOPLE_TABLE = "Szimuláció"
+PEOPLE_TABLE = "Szimulació"
 ID_COL = "LakosID"
 AGE_COL = "Kor"
 LABOUR_COL = "Munkaviszony"
 
-TEMPLATES_TABLE = "LakasEpitő"
-LINK_TABLE = "lakasfel_tag"
+TEMPLATES_TABLE = "LakasEpitő_ver_2"
+LINK_TABLE = "lakasfel_tag_ver_2"
 
 AGE_BINS = ["<15", "15-29", "30-64", "65+"]
 LABOUR_CATS = ["emp", "unemp", "inact_benefit", "dependent"]
@@ -907,7 +907,7 @@ def build_institution_assignments(
 
     sql = f"""
     SELECT LakosID, Kor, Munkaviszony
-    FROM Szimuláció
+    FROM Szimulació
     WHERE LakosID IN ({",".join(["?"] * len(inst_ids))})
     """
     people = pd.read_sql_query(sql, conn, params=inst_ids)
@@ -1048,7 +1048,7 @@ ensure_schema(conn)
 all_templates = []
 run_id = "run_v1"
 
-for index, row in laktab.head(5).iterrows():   # remove .head(5) when ready
+for index, row in laktab.iterrows():   # remove .head(5) when ready
     lakhely_id = int(index) + 1
     hely = row.get("Helység megnevezése", lakhely_id)
 
@@ -1096,7 +1096,7 @@ for index, row in laktab.head(5).iterrows():   # remove .head(5) when ready
 
     # --- Compute leftover people (institutions) ---
     all_people_ids_df = pd.read_sql_query(
-        f"SELECT LakosID FROM Szimuláció WHERE {CITY_COL} = ?",
+        f"SELECT LakosID FROM Szimulació WHERE {CITY_COL} = ?",
         conn,
         params=(lakhely_id,),
     )

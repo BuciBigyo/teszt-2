@@ -430,7 +430,7 @@ def simulate_city(index: int, row: pd.Series) -> pd.DataFrame:
 # Run simulation for all cities
 # ======================================================
 
-for index, row in helytab.head(5).iterrows():   # remove .head(...) to run all
+for index, row in helytab.iterrows():   # remove .head(...) to run all
     city_name = row["Helység megnevezése"]
     df_city   = simulate_city(index, row)
     if not df_city.empty:
